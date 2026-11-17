@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { guardarTueste } from '@/almacen'
 import { controlar } from '@shared/domain/controlador'
-import type { Lectura, PlanTueste } from '@shared/domain/modelo'
+import type { TuesteGuardado } from '@shared/domain/historial'
+import type { Grano, Lectura, PlanTueste } from '@shared/domain/modelo'
 import { paso } from '@shared/domain/simulador'
+import { Grafico } from '@/components/Grafico'
 import { Button } from '@/components/ui/button'
 import { formatoGrados, formatoTiempo } from '@/formato'
 
@@ -17,10 +19,11 @@ type Muestra = Lectura & { subida: number }
 type Props = {
   plan: PlanTueste
   ambiente: number
+  grano: Grano
   onVolver: () => void
 }
 
-export function Tostar({ plan, ambiente, onVolver }: Props) {
+export function Tostar({ plan, ambiente, grano, onVolver }: Props) {
   const lectura = useRef<Lectura>({
     segundo: 0,
     grano: ambiente,
@@ -32,8 +35,10 @@ export function Tostar({ plan, ambiente, onVolver }: Props) {
   const [muestras, setMuestras] = useState<Muestra[]>([])
   const [corriendo, setCorriendo] = useState(true)
   const [velocidad, setVelocidad] = useState(10)
-  const [corte, setCorte] = useState(false)
+  const [corte, setCorte] = useState<'temperatura' | 'manual' | null>(null)
   const [descarga, setDescarga] = useState<number | null>(null)
+  const [aviso, setAviso] = useState<string | null>(null)
+  const guardado = useRef(false)
 
   useEffect(() => {
     if (!corriendo) return
@@ -56,7 +61,7 @@ export function Tostar({ plan, ambiente, onVolver }: Props) {
           const subida = subidaDe(sumadas, lectura.current)
           sumadas.push({ ...lectura.current, subida })
           if (orden.corte) {
-            setCorte(true)
+            setCorte('temperatura')
             termino = true
             break
           }
@@ -84,9 +89,34 @@ export function Tostar({ plan, ambiente, onVolver }: Props) {
     return () => cancelAnimationFrame(marco)
   }, [corriendo, velocidad, plan])
 
+  useEffect(() => {
+    if (corriendo || guardado.current || (descarga == null && corte == null) || muestras.length === 0) return
+    guardado.current = true
+    const tueste: TuesteGuardado = {
+      id: crypto.randomUUID(),
+      fecha: new Date().toISOString(),
+      grano,
+      ambiente,
+      plan,
+      muestras: muestras.map((muestra) => ({
+        segundo: muestra.segundo,
+        grano: muestra.grano,
+        aire: muestra.aire,
+        gas: muestra.gas,
+        aireFlujo: muestra.aireFlujo,
+        subida: muestra.subida
+      })),
+      corte: corte != null,
+      descargaSegundo: descarga
+    }
+    guardarTueste(tueste)
+      .then(() => setAviso('Guardado en este equipo.'))
+      .catch(() => setAviso('No se pudo guardar el tueste.'))
+  }, [ambiente, corriendo, corte, descarga, grano, muestras, plan])
+
   const actual = muestras[muestras.length - 1] ?? { ...lectura.current, subida: 0 }
   const fase = plan.fases.find((tramo) => actual.segundo <= tramo.hastaSegundo)
-  const datos = datosDelGrafico(plan, muestras)
+  const terminado = corte != null || descarga != null
 
   return (
     <div className="flex flex-col gap-6">
@@ -105,32 +135,21 @@ export function Tostar({ plan, ambiente, onVolver }: Props) {
         </dl>
       </div>
 
-      <div className="h-72 w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={datos}>
-            <CartesianGrid stroke="oklch(0.9 0.02 80)" vertical={false} />
-            <XAxis dataKey="segundo" tickFormatter={formatoTiempo} stroke="oklch(0.5 0.03 55)" fontSize={12} />
-            <YAxis stroke="oklch(0.5 0.03 55)" fontSize={12} unit="°" width={48} />
-            <Tooltip
-              formatter={(valor, nombre) => [typeof valor === 'number' ? formatoGrados(valor) : '—', String(nombre)]}
-              labelFormatter={(segundo) => formatoTiempo(Number(segundo))}
-            />
-            <Line type="monotone" dataKey="objetivo" name="Plan" stroke="oklch(0.72 0.04 75)" dot={false} strokeDasharray="4 4" connectNulls />
-            <Line type="monotone" dataKey="aire" name="Aire" stroke="oklch(0.62 0.08 55)" dot={false} connectNulls />
-            <Line type="monotone" dataKey="grano" name="Grano" stroke="oklch(0.4 0.08 48)" dot={false} strokeWidth={2} connectNulls />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <Grafico plan={plan} muestras={muestras} />
 
-      {corte ? <p className="text-sm text-destructive">Tueste interrumpido. El calor se cortó porque la temperatura se fue de rango.</p> : null}
+      {corte === 'temperatura' ? (
+        <p className="text-sm text-destructive">Tueste interrumpido. El calor se cortó porque la temperatura se fue de rango.</p>
+      ) : null}
+      {corte === 'manual' ? <p className="text-sm text-destructive">Tueste interrumpido.</p> : null}
       {descarga != null ? (
         <p className="text-sm">
           Descarga a los {formatoTiempo(descarga)}. El grano llegó a {formatoGrados(actual.grano)}.
         </p>
       ) : null}
+      {aviso ? <p className="text-sm text-muted-foreground">{aviso}</p> : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" onClick={() => setCorriendo((valor) => !valor)} disabled={corte || descarga != null}>
+        <Button type="button" variant="outline" onClick={() => setCorriendo((valor) => !valor)} disabled={terminado}>
           {corriendo ? 'Frenar' : 'Seguir'}
         </Button>
         {[1, 10, 60].map((opcion) => (
@@ -141,7 +160,7 @@ export function Tostar({ plan, ambiente, onVolver }: Props) {
         <Button
           type="button"
           variant="destructive"
-          disabled={corte || descarga != null}
+          disabled={terminado}
           onClick={() => {
             lectura.current = { ...lectura.current, gas: 0 }
             setMuestras((previas) => {
@@ -149,7 +168,7 @@ export function Tostar({ plan, ambiente, onVolver }: Props) {
               if (!ultima) return previas
               return [...previas.slice(0, -1), { ...ultima, gas: 0 }]
             })
-            setCorte(true)
+            setCorte('manual')
             setCorriendo(false)
           }}
         >
@@ -173,23 +192,6 @@ function subidaDe(muestras: Muestra[], actual: Lectura): number {
   if (!base) base = muestras[0] ?? null
   if (!base || base.segundo >= actual.segundo) return 0
   return ((actual.grano - base.grano) / (actual.segundo - base.segundo)) * 60
-}
-
-function datosDelGrafico(plan: PlanTueste, muestras: Muestra[]) {
-  const hasta = Math.max(plan.duracionSegundos, muestras[muestras.length - 1]?.segundo ?? 0)
-  const porSegundo = new Map(muestras.map((muestra) => [muestra.segundo, muestra]))
-  const datos = []
-  for (let segundo = 0; segundo <= hasta; segundo += 2) {
-    const vivo = porSegundo.get(segundo)
-    const objetivo = plan.curva[segundo]?.grano
-    datos.push({
-      segundo,
-      objetivo: objetivo ?? null,
-      grano: vivo ? vivo.grano : null,
-      aire: vivo ? vivo.aire : null
-    })
-  }
-  return datos
 }
 
 function Dato({ etiqueta, valor }: { etiqueta: string; valor: string }) {

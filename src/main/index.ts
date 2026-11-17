@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { APP_ID, APP_NAME } from '../shared/brand'
+import { registrarTuestes } from './tuestes'
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -36,6 +37,7 @@ function createWindow(): void {
 
 app.whenReady().then(() => {
   app.setAppUserModelId(APP_ID)
+  registrarTuestes()
   createWindow()
 
   app.on('activate', () => {

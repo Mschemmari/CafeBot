@@ -1,3 +1,9 @@
+export function formatoFecha(iso: string): string {
+  const fecha = new Date(iso)
+  if (Number.isNaN(fecha.getTime())) return iso
+  return fecha.toLocaleString('es-AR', { dateStyle: 'medium', timeStyle: 'short' })
+}
+
 export function formatoTiempo(segundos: number): string {
   const minutos = Math.floor(segundos / 60)
   const resto = Math.max(0, segundos % 60)

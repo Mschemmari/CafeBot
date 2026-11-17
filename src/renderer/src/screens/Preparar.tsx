@@ -12,7 +12,7 @@ const NOMBRE_FASE = {
 } as const
 
 type Props = {
-  onTostar: (plan: PlanTueste, ambiente: number) => void
+  onTostar: (plan: PlanTueste, ambiente: number, grano: Grano) => void
 }
 
 export function Preparar({ onTostar }: Props) {
@@ -26,6 +26,7 @@ export function Preparar({ onTostar }: Props) {
   const [variante, setVariante] = useState(0)
   const [plan, setPlan] = useState<PlanTueste | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [cargando, setCargando] = useState(false)
 
   function armar(siguienteVariante: number): void {
     const ambiente = Number(ambienteTexto)
@@ -47,14 +48,19 @@ export function Preparar({ onTostar }: Props) {
       setPlan(null)
       return
     }
-    try {
-      setPlan(planificar(grano, ambiente, siguienteVariante))
-      setVariante(siguienteVariante)
-      setError(null)
-    } catch (causa) {
-      setPlan(null)
-      setError(causa instanceof Error ? causa.message : 'No se pudo armar el plan.')
-    }
+    setCargando(true)
+    setError(null)
+    window.setTimeout(() => {
+      try {
+        setPlan(planificar(grano, ambiente, siguienteVariante))
+        setVariante(siguienteVariante)
+      } catch (causa) {
+        setPlan(null)
+        setError(causa instanceof Error ? causa.message : 'No se pudo armar el plan.')
+      } finally {
+        setCargando(false)
+      }
+    }, 0)
   }
 
   return (
@@ -113,10 +119,16 @@ export function Preparar({ onTostar }: Props) {
           <Input inputMode="decimal" value={ambienteTexto} onChange={(evento) => setAmbienteTexto(evento.target.value)} />
         </Campo>
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        <Button type="submit">Armar plan</Button>
+        <Button type="submit" disabled={cargando}>
+          {cargando ? 'Armando el plan…' : 'Armar plan'}
+        </Button>
       </form>
 
-      {plan ? (
+      {cargando ? (
+        <section className="flex min-h-48 items-center rounded-xl border border-border bg-card p-5 text-muted-foreground">
+          Armando el plan…
+        </section>
+      ) : plan ? (
         <section className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5">
           <p className="text-lg leading-relaxed">{plan.esperado}</p>
           <dl className="grid grid-cols-2 gap-3 text-sm">
@@ -134,7 +146,18 @@ export function Preparar({ onTostar }: Props) {
           </ul>
           <p className="text-sm text-muted-foreground">Propuesta {variante + 1} de 3</p>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => onTostar(plan, Number(ambienteTexto))}>
+            <Button
+              type="button"
+              onClick={() =>
+                onTostar(plan, Number(ambienteTexto), {
+                  origen,
+                  proceso,
+                  alturaMetros: sinAltura ? null : Number(altura),
+                  taza,
+                  nivel
+                })
+              }
+            >
               Tostar
             </Button>
             <Button type="button" variant="outline" onClick={() => armar((variante + 1) % 3)}>
